@@ -38,7 +38,7 @@ torch.manual_seed(0)
 np.random.seed(0)
 random.seed(0)
 
-# Data loading code.
+# Data loading code
 if args.fw_sample > 0:
     print('Performing few sample learning with # of samples = ', args.fw_sample)
 
