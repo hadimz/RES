@@ -232,9 +232,9 @@ def sample_selection_with_explanations_places(n_smaple_with_label, path_to_attn,
             path_to_attn_urban[path] = path_to_attn[path]
         else:
             print('Something wrong with this image:', path)
-
     print('Total number of explanation labels in train set - nature:', len(path_to_attn_nature))
     print('Total number of explanation labels in train set - urban:', len(path_to_attn_urban))
+
     random.seed(args.random_seed)
     sample_paths_nature = random.sample(list(path_to_attn_nature), n_smaple_with_label)
     sample_paths_urban = random.sample(list(path_to_attn_urban), n_smaple_with_label)
@@ -267,6 +267,52 @@ def sample_selection_with_explanations_places(n_smaple_with_label, path_to_attn,
             else:
                 print('Something wrong with this image:', fw_dir_path + '/' + path)
 
+def sample_selection_with_explanations_sixray(n_smaple_with_label, path_to_attn, label_ratio = 1):
+    n_smaple_without_label = int(n_smaple_with_label/label_ratio)-n_smaple_with_label
+
+    path_to_attn_neg = {}
+    path_to_attn_pos = {}
+    source_dir_path = './sixray/train'
+    # before selection, let's create two pools for men and women separately to ensure our selection with be balanced
+    for path in path_to_attn:
+        if os.path.isfile(source_dir_path + '/neg/' + path):
+            path_to_attn_neg[path] = path_to_attn[path]
+        elif os.path.isfile(source_dir_path + '/pos/' + path):
+            path_to_attn_pos[path] = path_to_attn[path]
+        else:
+            print('Something wrong with this image:', path)
+
+    print('Total number of explanation labels in train set - negative:', len(path_to_attn_neg))
+    print('Total number of explanation labels in train set - positive:', len(path_to_attn_pos))
+    random.seed(args.random_seed)
+    sample_paths_pos = random.sample(list(path_to_attn_pos), n_smaple_with_label)
+
+    path_to_attn_fw = {}
+    for path in sample_paths_pos:
+        path_to_attn_fw[path]= path_to_attn[path]
+
+    path_to_attn = path_to_attn_fw
+    # create and copy the select
+    fw_dir_path = './sixray/' + 'fw_' + str(args.fw_sample) + '_seed_' + str(args.random_seed)
+
+    if not os.path.isdir(fw_dir_path):
+        os.mkdir(fw_dir_path)
+        os.mkdir(fw_dir_path + '/neg')
+        os.mkdir(fw_dir_path + '/pos')
+        # copy the selected images from source to new folder
+        for path in path_to_attn:
+            # print(path)
+            if os.path.isfile(source_dir_path + '/neg/' + path):
+                src = source_dir_path + '/neg/' + path
+                dst = fw_dir_path + '/neg/' + path
+                shutil.copyfile(src, dst)
+            elif os.path.isfile(source_dir_path + '/pos/' + path):
+                src = source_dir_path + '/pos/' + path
+                dst = fw_dir_path + '/pos/' + path
+                shutil.copyfile(src, dst)
+            else:
+                print('Something wrong with this image:', fw_dir_path + '/' + path)
+
 
 def load_path_to_attentions():
     # csv file format: img_idx,attention,img_check,matrix_resize
@@ -278,21 +324,28 @@ def load_path_to_attentions():
 
     for fn in fns:
         df = pd.read_csv(os.path.join(source_path, fn))
+        
 
         if 'counterfactual' in fn:
             # negative attention labels
             for index, row in df.iterrows():
                 if row['img_check'] == 'good':
-                    img_fn = row['img_idx'] + '.jpg'
+                    if row['img_idx'][-4:] != '.jpg':
+                        img_fn = row['img_idx'] + '.jpg'
+                    else:
+                        img_fn = row['img_idx']
                     path_to_neg_attn[img_fn] = np.array(json.loads(row['attention']))
         else:
             # positive attention labels
             for index, row in df.iterrows():
                 if row['img_check'] == 'good':
-                    img_fn = row['img_idx'] + '.jpg'
+                    if row['img_idx'][-4:] != '.jpg':
+                        img_fn = row['img_idx'] + '.jpg'
+                    else:
+                        img_fn = row['img_idx']
                     path_to_pos_attn[img_fn] = np.array(json.loads(row['attention']))
                     path_to_attn[img_fn] = ''
-
+    
     for img_fn in path_to_attn.keys():
         if img_fn in path_to_pos_attn:
             if img_fn in path_to_neg_attn:
@@ -411,10 +464,10 @@ def get_args():
 
     args = parser.parse_args()
     args.use_cuda = args.use_cuda and torch.cuda.is_available()
-    # if args.use_cuda:
-    #     print("Using GPU for acceleration")
-    # else:
-    #     print("Using CPU for computation")
+    if args.use_cuda:
+        print("Using GPU for acceleration")
+    else:
+        print("Using CPU for computation")
 
     return args
 
@@ -947,6 +1000,8 @@ if __name__ == '__main__':
             sample_selection_with_explanations_gender(args.fw_sample, path_to_attn)
         elif args.data_dir == 'places':
             sample_selection_with_explanations_places(args.fw_sample, path_to_attn)
+        elif args.data_dir == 'sixray':
+            sample_selection_with_explanations_sixray(args.fw_sample, path_to_attn)
         else:
             print('Error: Unrecognized dataset:', args.data)
 
