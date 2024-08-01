@@ -23,7 +23,7 @@ from utils_train import *
 
 
 args = get_args()
-path_to_attn, path_to_attn_resized = load_path_to_attentions()
+path_to_attn, path_to_attn_resized = load_path_to_attentions(args=args)
 # resize attention label from 224x224 to 14x14
 # path_to_attn_resized = resize_attention_label(path_to_attn)
 
@@ -43,11 +43,11 @@ if args.fw_sample > 0:
     print('Performing few sample learning with # of samples = ', args.fw_sample)
 
     if args.data_dir == 'gender_data':
-        sample_selection_with_explanations_gender(args.fw_sample, path_to_attn)
+        sample_selection_with_explanations_gender(args.fw_sample, path_to_attn, args=args)
     elif args.data_dir == 'places':
-        sample_selection_with_explanations_places(args.fw_sample, path_to_attn)
+        sample_selection_with_explanations_places(args.fw_sample, path_to_attn, args=args)
     elif args.data_dir == 'sixray':
-        sample_selection_with_explanations_sixray(args.fw_sample, path_to_attn)
+        sample_selection_with_explanations_sixray(args.fw_sample, path_to_attn, args=args)
     else:
         print('Error: Unrecognized dataset:', args.data)
 
@@ -162,5 +162,5 @@ else:
     else:
         # for baseline without explanation supervision
         print('Init training for baseline..')
-        best_val_acc = model_train(model, train_loader, val_loader)
+        best_val_acc = model_train(model, train_loader, val_loader, args=args)
         print('Finish Training. Best Validation acc:', best_val_acc)

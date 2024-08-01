@@ -9,7 +9,7 @@ import cv2
 from utils import *
 from metrics import *
 
-def sample_selection_with_explanations_gender(n_smaple_with_label, path_to_attn, label_ratio = 1, args=None):
+def sample_selection_with_explanations_gender(n_smaple_with_label, path_to_attn, args, label_ratio = 1):
     n_smaple_without_label = int(n_smaple_with_label/label_ratio)-n_smaple_with_label
 
     path_to_attn_men = {}
@@ -58,7 +58,7 @@ def sample_selection_with_explanations_gender(n_smaple_with_label, path_to_attn,
             else:
                 print('Something wrong with this image:', fw_dir_path + '/' + path)
 
-def sample_selection_with_explanations_places(n_smaple_with_label, path_to_attn, label_ratio = 1, args=None):
+def sample_selection_with_explanations_places(n_smaple_with_label, path_to_attn, args, label_ratio = 1):
     n_smaple_without_label = int(n_smaple_with_label/label_ratio)-n_smaple_with_label
 
     path_to_attn_nature = {}
@@ -107,7 +107,7 @@ def sample_selection_with_explanations_places(n_smaple_with_label, path_to_attn,
             else:
                 print('Something wrong with this image:', fw_dir_path + '/' + path)
 
-def sample_selection_with_explanations_sixray(n_smaple_with_label, path_to_attn, label_ratio = 1, args=None):
+def sample_selection_with_explanations_sixray(n_smaple_with_label, path_to_attn, args, label_ratio = 1):
     n_smaple_without_label = int(n_smaple_with_label/label_ratio)-n_smaple_with_label
 
     path_to_attn_neg = {}
@@ -153,7 +153,7 @@ def sample_selection_with_explanations_sixray(n_smaple_with_label, path_to_attn,
             else:
                 print('Something wrong with this image:', fw_dir_path + '/' + path)
 
-def model_test(model, test_loader, output_attention=False, output_iou=False, args=None, path_to_attn=None, path_to_attn_resized=None):
+def model_test(model, test_loader, args, output_attention=False, output_iou=False, path_to_attn=None, path_to_attn_resized=None):
     # model.eval()
     iou = AverageMeter()
     exp_precision = AverageMeter()
@@ -262,7 +262,7 @@ def BF_solver(X, Y):
 
     return torch.tensor([a]).cuda()
 
-def model_train_with_map(model, train_loader, val_loader, transforms = None, area = False, eta = 0.0, args=None, path_to_attn=None):
+def model_train_with_map(model, train_loader, val_loader, args, transforms = None, area = False, eta = 0.0, path_to_attn=None):
     eta = torch.tensor([eta]).cuda()
     reg_criterion = nn.MSELoss()
     # reg_criterion = nn.L1Loss()
@@ -471,7 +471,7 @@ def model_train_with_map(model, train_loader, val_loader, transforms = None, are
 
     return best_val_acc
 
-def model_train(model, train_loader, val_loader, args=None):
+def model_train(model, train_loader, val_loader, args):
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
     best_val_acc = 0
