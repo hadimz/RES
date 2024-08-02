@@ -8,6 +8,7 @@ import time
 import cv2
 from utils import *
 from metrics import *
+from gradCAM import class_activation_map
 
 def sample_selection_with_explanations_gender(n_smaple_with_label, path_to_attn, args, label_ratio = 1):
     n_smaple_without_label = int(n_smaple_with_label/label_ratio)-n_smaple_with_label
@@ -153,7 +154,7 @@ def sample_selection_with_explanations_sixray(n_smaple_with_label, path_to_attn,
             else:
                 print('Something wrong with this image:', fw_dir_path + '/' + path)
 
-def model_test(model, test_loader, args, output_attention=False, output_iou=False, path_to_attn=None, path_to_attn_resized=None):
+def model_test(model, test_loader, args, path_to_attn, output_attention=False, output_iou=False):
     # model.eval()
     iou = AverageMeter()
     exp_precision = AverageMeter()
@@ -262,7 +263,7 @@ def BF_solver(X, Y):
 
     return torch.tensor([a]).cuda()
 
-def model_train_with_map(model, train_loader, val_loader, args, transforms = None, area = False, eta = 0.0, path_to_attn=None):
+def model_train_with_map(model, train_loader, val_loader, args, path_to_attn, transforms = None, area = False, eta = 0.0):
     eta = torch.tensor([eta]).cuda()
     reg_criterion = nn.MSELoss()
     # reg_criterion = nn.L1Loss()
@@ -542,5 +543,214 @@ def model_train(model, train_loader, val_loader, args):
             print('UPDATE!!!')
 
         print('Epoch:', epoch, ', Train Time:', train_time, ', Train Loss:', np.average(train_losses), ', Train Acc:', train_acc, 'Val Acc:', val_acc)
+
+    return best_val_acc
+
+def model_train_mine(model, train_loader, val_loader, args, path_to_attn, transforms = None, area = False, eta = 0.0):
+    eta = torch.tensor([eta]).cuda()
+    reg_criterion = nn.MSELoss()
+    # reg_criterion = nn.L1Loss()
+    BCE_criterion = nn.BCELoss()
+    task_criterion = nn.CrossEntropyLoss(reduction='none')
+    attention_criterion = nn.L1Loss(reduction='none')
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+
+    best_val_acc = 0
+
+    # load grad_cam module
+    grad_cam = GradCam(model=model, feature_module=model.layer4, target_layer_names=["2"], use_cuda=args.use_cuda)
+    for epoch in np.arange(args.n_epoch) + 1:
+        # switch to train mode
+        model.train()
+
+        st = time.time()
+        train_losses = []
+        if args.use_cuda:
+            torch.cuda.empty_cache()
+
+        outputs_all = []
+        targets_all = []
+
+        for batch_idx, (inputs, targets, target_maps, target_maps_org, pred_weight, att_weight) in enumerate(train_loader):
+            attention_loss = 0
+            if args.use_cuda:
+                inputs, targets, target_maps, target_maps_org, pred_weight, att_weight = inputs.cuda(), targets.cuda(
+                    non_blocking=True), target_maps.cuda(), target_maps_org.cuda(), pred_weight.cuda(), att_weight.cuda()
+            att_maps = []
+            att_map_labels = []
+            att_map_labels_trans = []
+            att_weights = []
+            outputs = model(inputs)
+
+            for input, target, target_map, target_map_org, valid_weight in zip(inputs, targets, target_maps, target_maps_org, att_weight):
+                # only train on img with attention labels
+                if valid_weight > 0.0:
+                    # get attention maps from grad-CAM
+                    att_map, _ = grad_cam.get_attention_map(torch.unsqueeze(input, 0), target, norm = None)
+                    att_maps.append(att_map)
+
+                    if transforms == 'Gaussian':
+                        # here we only work on positive labels for D loss
+                        target_map_pos = np.maximum(target_map.cpu().numpy(), 0)
+                        target_map_trans = cv2.GaussianBlur(target_map_pos, (3, 3), 0)
+                        target_map_trans = target_map_trans / (np.max(target_map_trans)+1e-6)
+                        att_map_labels_trans.append(torch.from_numpy(target_map_trans).cuda())
+                    elif transforms == 'S1':
+                        target_map_pos_org = torch.unsqueeze((target_map_org>0).float(),0)
+                        input_imp = target_map_pos_org
+
+                        target_map_trans = model.imp(torch.unsqueeze(input_imp, 0))
+                        temp = torch.squeeze(target_map_trans)
+                        temp = temp - torch.min(temp)
+                        temp = temp / (torch.max(temp) + 1e-6)
+                        att_map_labels_trans.append(temp)
+                    elif transforms == 'S2':
+                        target_map_pos_org = torch.unsqueeze((target_map_org>0).float(),0)
+                        # with both input X and the human mask F (input 3x224x224, we need the raw target map in 1x224x224)
+                        input_imp = torch.cat((target_map_pos_org, input), 0)
+
+                        target_map_trans = model.imp(torch.unsqueeze(input_imp, 0))
+                        temp = torch.squeeze(target_map_trans)
+                        temp = temp - torch.min(temp)
+                        temp = temp / (torch.max(temp) + 1e-6)
+                        att_map_labels_trans.append(temp)
+                    elif transforms == 'D1':
+                        target_map_pos_org = torch.unsqueeze((target_map_org>0).float(),0)
+                        input_imp = target_map_pos_org
+
+                        H1 = torch.relu(model.imp_conv1(torch.unsqueeze(input_imp, 0)))
+                        H2 = torch.relu(model.imp_conv2(H1))
+                        H3 = torch.relu(model.imp_conv3(H2))
+                        H4 = torch.relu(model.imp_conv4(H3))
+                        H5 = model.imp_conv5(H4)
+
+                        temp = torch.squeeze(H5)
+                        temp = temp - torch.min(temp)
+                        temp = temp / (torch.max(temp) + 1e-6)
+                        att_map_labels_trans.append(temp)
+                    elif transforms == 'D2':
+                        target_map_pos_org = torch.unsqueeze((target_map_org>0).float(),0)
+                        # 4x224x224
+                        input_imp = torch.cat((target_map_pos_org, input), 0)
+
+                        H1 = torch.relu(model.imp_conv1(torch.unsqueeze(input_imp, 0)))
+                        H2 = torch.relu(model.imp_conv2(H1))
+                        H3 = torch.relu(model.imp_conv3(H2))
+                        H4 = torch.relu(model.imp_conv4(H3))
+                        H5 = model.imp_conv5(H4)
+
+                        temp = torch.squeeze(H5)
+                        temp = temp - torch.min(temp)
+                        temp = temp / (torch.max(temp) + 1e-6)
+                        att_map_labels_trans.append(temp)
+
+                    att_map_labels.append(target_map)
+                    att_weights.append(valid_weight)
+
+            # compute task loss
+            task_loss = task_criterion(outputs, targets)
+            task_loss = torch.mean(pred_weight * task_loss)
+
+            # compute exp loss
+            if att_maps:
+                att_maps = torch.stack(att_maps)
+                att_map_labels = torch.stack(att_map_labels)
+
+                if transforms == 'S1' or transforms == 'S2' or transforms == 'D1' or transforms == 'D2' or transforms == 'Gaussian':
+                    # hard threshold solver for a
+                    a = BF_solver(att_maps, att_map_labels)
+                    # alternatively, we can use tanh as surrogate loss to make att_maps trainable
+                    temp1 = torch.tanh(5*(att_maps - a))
+                    temp_loss = attention_criterion(temp1, att_map_labels)
+
+                    # normalize by effective areas
+                    temp_size = (att_map_labels != 0).float()
+                    eff_loss = torch.sum(temp_loss * temp_size) / torch.sum(temp_size)
+                    attention_loss += torch.relu(torch.mean(eff_loss) - eta)
+                else:
+                    a = 0
+
+                if transforms == 'S1' or transforms == 'S2' or transforms == 'D1' or transforms == 'D2':
+                    att_map_labels_trans = torch.stack(att_map_labels_trans)
+                    tempD = attention_criterion(att_maps, att_map_labels_trans)
+                    # regularization (currently prefer not use it)
+                    reg_loss = reg_criterion(att_map_labels_trans, att_map_labels * (att_map_labels > 0).float())
+                    attention_loss += args.reg * reg_loss
+                elif transforms == 'Gaussian':
+                    att_map_labels_trans = torch.stack(att_map_labels_trans)
+                    tempD = attention_criterion(att_maps, att_map_labels_trans)
+                elif transforms == 'HAICS':
+                    tempD = BCE_criterion(att_maps, att_map_labels * (att_map_labels > 0).float()) * (att_map_labels != 0).float()
+                else: # GRADIA
+                    tempD = attention_criterion(att_maps, att_map_labels * (att_map_labels > 0).float())
+
+                attention_loss += torch.mean(tempD)
+                loss = task_loss + attention_loss
+            else:
+                loss = task_loss
+
+            # compute gradient and do SGD step
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            train_losses += [loss.cpu().detach().tolist()]
+
+            outputs_all += [outputs]
+            targets_all += [targets]
+
+            print('Batch_idx :', batch_idx, ', task_loss', task_loss, ', attention_loss', attention_loss, ', a:', a)
+            # print('Batch_idx :', batch_idx, ', task_loss:', task_loss, ', attention_loss', 0.3*attention_loss, ', pos_loss:', torch.mean(pos_loss), ', neg_loss:', torch.mean(neg_loss), ', a:', a)
+
+        et = time.time()
+        train_time = et - st
+
+        train_acc = accuracy(torch.cat(outputs_all), torch.cat(targets_all))[0].cpu().detach()
+
+        '''
+            Valid
+        '''
+        print('start validation')
+        model.eval()
+        st = time.time()
+        outputs_all = []
+        targets_all = []
+
+        iou = AverageMeter()
+        for batch_idx, (inputs, targets, paths) in enumerate(val_loader):
+            if args.use_cuda:
+                inputs, targets = inputs.cuda(), targets.cuda(non_blocking=True)
+            with torch.no_grad():
+                outputs = model(inputs)
+
+            for img_path in paths:
+                _, img_fn = os.path.split(img_path)
+                img = cv2.imread(img_path, 1)
+                img = np.float32(cv2.resize(img, (224, 224))) / 255
+                input = preprocess_image(img)
+                mask = grad_cam(input)
+
+                if img_fn in path_to_attn:
+                    item_att_binary = (mask > 0.5)
+                    target_att = path_to_attn[img_fn]
+                    target_att_binary = (target_att > 0)
+                    single_iou = compute_iou(item_att_binary, target_att_binary)
+                    iou.update(single_iou.item(), 1)
+
+            outputs_all += [outputs]
+            targets_all += [targets]
+
+        et = time.time()
+        test_time = et - st
+
+        val_acc = accuracy(torch.cat(outputs_all), torch.cat(targets_all))[0].cpu().detach()
+        val_iou = iou.avg
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            torch.save(model, os.path.join(args.model_dir, args.model_name))
+            print('UPDATE!!!')
+
+        print('Epoch:', epoch, ', Train Time:', train_time, ', Train Loss:', np.average(train_losses), ', Train Acc:', train_acc, 'Val Acc:', val_acc, 'Val IOU:', val_iou)
 
     return best_val_acc
