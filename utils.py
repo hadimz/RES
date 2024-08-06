@@ -148,7 +148,8 @@ class ImageFolderWithMaps(datasets.ImageFolder):
         return tuple_with_map
 
 class ImageFolderWithMapsAndWeights(datasets.ImageFolder):
-    def __init__(self, path_to_attn, path_to_attn_resized):
+    def __init__(self, traindir, transforms, path_to_attn, path_to_attn_resized):
+        super().__init__(traindir, transforms)
         self.path_to_attn = path_to_attn
         self.path_to_attn_resized = path_to_attn_resized
 
@@ -219,6 +220,9 @@ def get_args():
                         help='random seed for sampling the dataset')
     parser.add_argument('--reg', default=0.0, type=float,
                         help='The scale factor for L2 regularization for deep imputation')
+    parser.add_argument('--mine', default=False, type=bool,
+                        help='parameter for using my approach')
+
 
     args = parser.parse_args()
     args.use_cuda = args.use_cuda and torch.cuda.is_available()
@@ -357,6 +361,9 @@ class GradCam:
 
         return cam
 
+
+
+
 def deprocess_image(img):
     """ see https://github.com/jacobgil/keras-grad-cam/blob/master/grad-cam.py#L65 """
     img = img - np.mean(img)
@@ -366,3 +373,43 @@ def deprocess_image(img):
     img = np.clip(img, 0, 1)
     return np.uint8(img * 255)
 
+def BF_solver(X, Y):
+    epsilon = 1e-4
+
+    with torch.no_grad():
+        x = torch.flatten(X)
+        y = torch.flatten(Y)
+        g_idx = (y<0).nonzero(as_tuple=True)[0]
+        le_idx = (y>0).nonzero(as_tuple=True)[0]
+        len_g = len(g_idx)
+        len_le = len(le_idx)
+        a = 0
+        a_ct = 0.0
+        for idx in g_idx:
+            v = x[idx] + epsilon # to avoid miss the constraint itself
+            v_ct = 0.0
+            for c_idx in g_idx:
+                v_ct += (v>x[c_idx]).float()/len_g
+            for c_idx in le_idx:
+                v_ct += (v<=x[c_idx]).float()/len_le
+            if v_ct>a_ct:
+                a = v
+                a_ct = v_ct
+                # print('New best solution found, a=', a, ', # of constraints matches:', a_ct)
+
+        for idx in le_idx:
+            v = x[idx]
+            v_ct = 0.0
+            for c_idx in g_idx:
+                v_ct += (v>x[c_idx]).float()/len_g
+            for c_idx in le_idx:
+                v_ct += (v<=x[c_idx]).float()/len_le
+            if v_ct>a_ct:
+                a = v
+                a_ct = v_ct
+                # print('New best solution found, a=', a, ', # of constraints matches:', a_ct)
+
+    # print('optimal solution for batch, a=', a)
+    # print('final threshold a is assigned as:', am)
+
+    return torch.tensor([a]).cuda()

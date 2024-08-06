@@ -7,6 +7,7 @@ import shutil
 import time
 import cv2
 from utils import *
+from my_utils import *
 from metrics import *
 from gradCAM import class_activation_map
 
@@ -114,22 +115,32 @@ def sample_selection_with_explanations_sixray(n_smaple_with_label, path_to_attn,
     path_to_attn_neg = {}
     path_to_attn_pos = {}
     source_dir_path = './sixray/train'
-    # before selection, let's create two pools for men and women separately to ensure our selection with be balanced
+    # before selection, let's create two pools for positive and negative separately to ensure our selection with be balanced
     for path in path_to_attn:
-        if os.path.isfile(source_dir_path + '/neg/' + path):
-            path_to_attn_neg[path] = path_to_attn[path]
-        elif os.path.isfile(source_dir_path + '/pos/' + path):
+        # if os.path.isfile(source_dir_path + '/neg/' + path):
+        #     path_to_attn_neg[path] = path_to_attn[path]
+        #     print(source_dir_path + '/neg/' + path)
+        if os.path.isfile(source_dir_path + '/pos/' + path):
             path_to_attn_pos[path] = path_to_attn[path]
         else:
             print('Something wrong with this image:', path)
+    
+    neg_filenames = next(os.walk('./sixray/train/neg/'), (None, None, []))[2]
+    for path in neg_filenames:
+        if os.path.isfile(source_dir_path + '/neg/' + path):
+            path_to_attn[path] = np.ones(224)
+            path_to_attn_neg[path] = path_to_attn[path]
 
     print('Total number of explanation labels in train set - negative:', len(path_to_attn_neg))
     print('Total number of explanation labels in train set - positive:', len(path_to_attn_pos))
     random.seed(args.random_seed)
     sample_paths_pos = random.sample(list(path_to_attn_pos), n_smaple_with_label)
+    sample_paths_neg = random.sample(list(path_to_attn_neg), n_smaple_with_label)
 
     path_to_attn_fw = {}
     for path in sample_paths_pos:
+        path_to_attn_fw[path]= path_to_attn[path]
+    for path in sample_paths_neg:
         path_to_attn_fw[path]= path_to_attn[path]
 
     path_to_attn = path_to_attn_fw
@@ -221,47 +232,6 @@ def model_test(model, test_loader, args, path_to_attn, output_attention=False, o
     test_acc = accuracy(torch.cat(outputs_all, dim=0), torch.cat(targets_all))[0].cpu().detach()
 
     return test_acc, iou.avg, exp_precision.avg, exp_recall.avg, exp_f1.avg
-
-def BF_solver(X, Y):
-    epsilon = 1e-4
-
-    with torch.no_grad():
-        x = torch.flatten(X)
-        y = torch.flatten(Y)
-        g_idx = (y<0).nonzero(as_tuple=True)[0]
-        le_idx = (y>0).nonzero(as_tuple=True)[0]
-        len_g = len(g_idx)
-        len_le = len(le_idx)
-        a = 0
-        a_ct = 0.0
-        for idx in g_idx:
-            v = x[idx] + epsilon # to avoid miss the constraint itself
-            v_ct = 0.0
-            for c_idx in g_idx:
-                v_ct += (v>x[c_idx]).float()/len_g
-            for c_idx in le_idx:
-                v_ct += (v<=x[c_idx]).float()/len_le
-            if v_ct>a_ct:
-                a = v
-                a_ct = v_ct
-                # print('New best solution found, a=', a, ', # of constraints matches:', a_ct)
-
-        for idx in le_idx:
-            v = x[idx]
-            v_ct = 0.0
-            for c_idx in g_idx:
-                v_ct += (v>x[c_idx]).float()/len_g
-            for c_idx in le_idx:
-                v_ct += (v<=x[c_idx]).float()/len_le
-            if v_ct>a_ct:
-                a = v
-                a_ct = v_ct
-                # print('New best solution found, a=', a, ', # of constraints matches:', a_ct)
-
-    # print('optimal solution for batch, a=', a)
-    # print('final threshold a is assigned as:', am)
-
-    return torch.tensor([a]).cuda()
 
 def model_train_with_map(model, train_loader, val_loader, args, path_to_attn, transforms = None, area = False, eta = 0.0):
     eta = torch.tensor([eta]).cuda()
@@ -546,20 +516,16 @@ def model_train(model, train_loader, val_loader, args):
 
     return best_val_acc
 
-def model_train_mine(model, train_loader, val_loader, args, path_to_attn, transforms = None, area = False, eta = 0.0):
+def model_train_mine(model, train_loader, val_loader, args, path_to_attn, eta = 10.0):
     eta = torch.tensor([eta]).cuda()
-    reg_criterion = nn.MSELoss()
-    # reg_criterion = nn.L1Loss()
-    BCE_criterion = nn.BCELoss()
     task_criterion = nn.CrossEntropyLoss(reduction='none')
     attention_criterion = nn.L1Loss(reduction='none')
-
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
 
     best_val_acc = 0
 
     # load grad_cam module
-    grad_cam = GradCam(model=model, feature_module=model.layer4, target_layer_names=["2"], use_cuda=args.use_cuda)
+    grad_cam = GradCam_mine(model=model, feature_module=model.layer4, target_layer_names=["2"], use_cuda=args.use_cuda)
     for epoch in np.arange(args.n_epoch) + 1:
         # switch to train mode
         model.train()
@@ -583,71 +549,19 @@ def model_train_mine(model, train_loader, val_loader, args, path_to_attn, transf
             att_weights = []
             outputs = model(inputs)
 
-            for input, target, target_map, target_map_org, valid_weight in zip(inputs, targets, target_maps, target_maps_org, att_weight):
+            for i, (input, target, target_map, target_map_org, valid_weight) in enumerate(zip(inputs, targets, target_maps, target_maps_org, att_weight)):
+                # import matplotlib.pyplot as plt
+                # plt.imshow(deprocess_image(input.cpu().squeeze().moveaxis(0,-1).numpy()), cmap='gray')
+                # plt.imshow(cv2.resize(target_map_org.cpu().squeeze().numpy(), dsize=(224, 224)), alpha=0.3, cmap='gray')
+                # plt.savefig(f'target_map_{i}.png')
+                # print(f'saved figure {i}')
                 # only train on img with attention labels
-                if valid_weight > 0.0:
-                    # get attention maps from grad-CAM
+                if valid_weight > 0.0:  
                     att_map, _ = grad_cam.get_attention_map(torch.unsqueeze(input, 0), target, norm = None)
                     att_maps.append(att_map)
 
-                    if transforms == 'Gaussian':
-                        # here we only work on positive labels for D loss
-                        target_map_pos = np.maximum(target_map.cpu().numpy(), 0)
-                        target_map_trans = cv2.GaussianBlur(target_map_pos, (3, 3), 0)
-                        target_map_trans = target_map_trans / (np.max(target_map_trans)+1e-6)
-                        att_map_labels_trans.append(torch.from_numpy(target_map_trans).cuda())
-                    elif transforms == 'S1':
-                        target_map_pos_org = torch.unsqueeze((target_map_org>0).float(),0)
-                        input_imp = target_map_pos_org
-
-                        target_map_trans = model.imp(torch.unsqueeze(input_imp, 0))
-                        temp = torch.squeeze(target_map_trans)
-                        temp = temp - torch.min(temp)
-                        temp = temp / (torch.max(temp) + 1e-6)
-                        att_map_labels_trans.append(temp)
-                    elif transforms == 'S2':
-                        target_map_pos_org = torch.unsqueeze((target_map_org>0).float(),0)
-                        # with both input X and the human mask F (input 3x224x224, we need the raw target map in 1x224x224)
-                        input_imp = torch.cat((target_map_pos_org, input), 0)
-
-                        target_map_trans = model.imp(torch.unsqueeze(input_imp, 0))
-                        temp = torch.squeeze(target_map_trans)
-                        temp = temp - torch.min(temp)
-                        temp = temp / (torch.max(temp) + 1e-6)
-                        att_map_labels_trans.append(temp)
-                    elif transforms == 'D1':
-                        target_map_pos_org = torch.unsqueeze((target_map_org>0).float(),0)
-                        input_imp = target_map_pos_org
-
-                        H1 = torch.relu(model.imp_conv1(torch.unsqueeze(input_imp, 0)))
-                        H2 = torch.relu(model.imp_conv2(H1))
-                        H3 = torch.relu(model.imp_conv3(H2))
-                        H4 = torch.relu(model.imp_conv4(H3))
-                        H5 = model.imp_conv5(H4)
-
-                        temp = torch.squeeze(H5)
-                        temp = temp - torch.min(temp)
-                        temp = temp / (torch.max(temp) + 1e-6)
-                        att_map_labels_trans.append(temp)
-                    elif transforms == 'D2':
-                        target_map_pos_org = torch.unsqueeze((target_map_org>0).float(),0)
-                        # 4x224x224
-                        input_imp = torch.cat((target_map_pos_org, input), 0)
-
-                        H1 = torch.relu(model.imp_conv1(torch.unsqueeze(input_imp, 0)))
-                        H2 = torch.relu(model.imp_conv2(H1))
-                        H3 = torch.relu(model.imp_conv3(H2))
-                        H4 = torch.relu(model.imp_conv4(H3))
-                        H5 = model.imp_conv5(H4)
-
-                        temp = torch.squeeze(H5)
-                        temp = temp - torch.min(temp)
-                        temp = temp / (torch.max(temp) + 1e-6)
-                        att_map_labels_trans.append(temp)
-
                     att_map_labels.append(target_map)
                     att_weights.append(valid_weight)
-
             # compute task loss
             task_loss = task_criterion(outputs, targets)
             task_loss = torch.mean(pred_weight * task_loss)
@@ -656,37 +570,18 @@ def model_train_mine(model, train_loader, val_loader, args, path_to_attn, transf
             if att_maps:
                 att_maps = torch.stack(att_maps)
                 att_map_labels = torch.stack(att_map_labels)
-
-                if transforms == 'S1' or transforms == 'S2' or transforms == 'D1' or transforms == 'D2' or transforms == 'Gaussian':
-                    # hard threshold solver for a
-                    a = BF_solver(att_maps, att_map_labels)
-                    # alternatively, we can use tanh as surrogate loss to make att_maps trainable
-                    temp1 = torch.tanh(5*(att_maps - a))
-                    temp_loss = attention_criterion(temp1, att_map_labels)
-
-                    # normalize by effective areas
-                    temp_size = (att_map_labels != 0).float()
-                    eff_loss = torch.sum(temp_loss * temp_size) / torch.sum(temp_size)
-                    attention_loss += torch.relu(torch.mean(eff_loss) - eta)
-                else:
-                    a = 0
-
-                if transforms == 'S1' or transforms == 'S2' or transforms == 'D1' or transforms == 'D2':
-                    att_map_labels_trans = torch.stack(att_map_labels_trans)
-                    tempD = attention_criterion(att_maps, att_map_labels_trans)
-                    # regularization (currently prefer not use it)
-                    reg_loss = reg_criterion(att_map_labels_trans, att_map_labels * (att_map_labels > 0).float())
-                    attention_loss += args.reg * reg_loss
-                elif transforms == 'Gaussian':
-                    att_map_labels_trans = torch.stack(att_map_labels_trans)
-                    tempD = attention_criterion(att_maps, att_map_labels_trans)
-                elif transforms == 'HAICS':
-                    tempD = BCE_criterion(att_maps, att_map_labels * (att_map_labels > 0).float()) * (att_map_labels != 0).float()
-                else: # GRADIA
-                    tempD = attention_criterion(att_maps, att_map_labels * (att_map_labels > 0).float())
+                
+                masks_binary = torch.where(att_map_labels==0, 0, 1)
+                tempD = torch.mean(masks_binary*att_maps) # attention_criterion(att_maps, (att_map_labels > 0).float())
+                
+                # import matplotlib.pyplot as plt
+                # plt.imshow(cv2.resize(deprocess_image(att_maps[0].cpu().detach().squeeze().moveaxis(0,-1).numpy()),dsize=(224, 224)), cmap='gray')
+                # plt.imshow(cv2.resize(att_map_labels[0].cpu().squeeze().numpy(), dsize=(224, 224)), alpha=0.3)
+                # plt.savefig(f'target_map_{i}.png')
+                # print(f'saved figure {i}')
 
                 attention_loss += torch.mean(tempD)
-                loss = task_loss + attention_loss
+                loss = task_loss + eta*attention_loss
             else:
                 loss = task_loss
 
@@ -700,7 +595,7 @@ def model_train_mine(model, train_loader, val_loader, args, path_to_attn, transf
             outputs_all += [outputs]
             targets_all += [targets]
 
-            print('Batch_idx :', batch_idx, ', task_loss', task_loss, ', attention_loss', attention_loss, ', a:', a)
+            # print('Batch_idx :', batch_idx, ', task_loss', task_loss, ', attention_loss', attention_loss, ', a:', a)
             # print('Batch_idx :', batch_idx, ', task_loss:', task_loss, ', attention_loss', 0.3*attention_loss, ', pos_loss:', torch.mean(pos_loss), ', neg_loss:', torch.mean(neg_loss), ', a:', a)
 
         et = time.time()

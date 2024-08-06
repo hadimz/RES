@@ -13,7 +13,7 @@ def class_activation_map(network, X, labels, cuda=False, size=224):
     :param size: The size of the input images
     """
 
-    grad_eye = torch.eye(10, requires_grad=True)
+    grad_eye = torch.eye(2, requires_grad=True)
     if cuda:
         grad_eye = grad_eye.cuda()
 
@@ -39,7 +39,7 @@ def class_activation_map(network, X, labels, cuda=False, size=224):
             local_map = torch.sum(A_k * alpha_k.unsqueeze(-1).unsqueeze(-1), axis=1)
             
 
-            if key in ["4b"]:
+            if key in ["2"]:
                 local_map = torch.maximum(local_map, torch.tensor(0.))
             minimum, _ = local_map.min(dim=2)
             minimum, _ = minimum.min(dim=1)
@@ -50,7 +50,7 @@ def class_activation_map(network, X, labels, cuda=False, size=224):
 
             # ********************************
             A_k_log = torch.sum(A_k.clone(), axis=1)
-            if key in ["4b"]:
+            if key in ["2"]:
                 A_k_log = torch.maximum(A_k_log, torch.tensor(0.))
             minimum_k, _ = A_k_log.min(dim=2)
             minimum_k, _ = minimum_k.min(dim=1)
