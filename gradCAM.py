@@ -32,7 +32,7 @@ def class_activation_map(network, X, labels, cuda=False, size=224):
             A_k = network.outputs[key]
             grad = network.grads[key]
 
-            alpha_k = grad.mean(axis=(2, 3))
+            alpha_k = grad.mean(axis=(2, 3)).detach()
 
             gradients.append(grad.detach().cpu())
 

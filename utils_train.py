@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torchvision.transforms.functional as ff
 import random
 import os
 import shutil
@@ -57,8 +58,8 @@ def sample_selection_with_explanations_gender(n_smaple_with_label, path_to_attn,
                 src = source_dir_path + '/women/' + path
                 dst = fw_dir_path + '/women/' + path
                 shutil.copyfile(src, dst)
-            else:
-                print('Something wrong with this image:', fw_dir_path + '/' + path)
+            # else:
+                # print('Something wrong with this image:', fw_dir_path + '/' + path)
 
 def sample_selection_with_explanations_places(n_smaple_with_label, path_to_attn, args, label_ratio = 1):
     n_smaple_without_label = int(n_smaple_with_label/label_ratio)-n_smaple_with_label
@@ -550,17 +551,11 @@ def model_train_mine(model, train_loader, val_loader, args, path_to_attn, eta = 
             outputs = model(inputs)
 
             for i, (input, target, target_map, target_map_org, valid_weight) in enumerate(zip(inputs, targets, target_maps, target_maps_org, att_weight)):
-                # import matplotlib.pyplot as plt
-                # plt.imshow(deprocess_image(input.cpu().squeeze().moveaxis(0,-1).numpy()), cmap='gray')
-                # plt.imshow(cv2.resize(target_map_org.cpu().squeeze().numpy(), dsize=(224, 224)), alpha=0.3, cmap='gray')
-                # plt.savefig(f'target_map_{i}.png')
-                # print(f'saved figure {i}')
-                # only train on img with attention labels
                 if valid_weight > 0.0:  
                     att_map, _ = grad_cam.get_attention_map(torch.unsqueeze(input, 0), target, norm = None)
                     att_maps.append(att_map)
 
-                    att_map_labels.append(target_map)
+                    att_map_labels.append((target_map_org==1).float())
                     att_weights.append(valid_weight)
             # compute task loss
             task_loss = task_criterion(outputs, targets)
@@ -571,14 +566,8 @@ def model_train_mine(model, train_loader, val_loader, args, path_to_attn, eta = 
                 att_maps = torch.stack(att_maps)
                 att_map_labels = torch.stack(att_map_labels)
                 
-                masks_binary = torch.where(att_map_labels==0, 0, 1)
-                tempD = torch.mean(masks_binary*att_maps) # attention_criterion(att_maps, (att_map_labels > 0).float())
-                
-                # import matplotlib.pyplot as plt
-                # plt.imshow(cv2.resize(deprocess_image(att_maps[0].cpu().detach().squeeze().moveaxis(0,-1).numpy()),dsize=(224, 224)), cmap='gray')
-                # plt.imshow(cv2.resize(att_map_labels[0].cpu().squeeze().numpy(), dsize=(224, 224)), alpha=0.3)
-                # plt.savefig(f'target_map_{i}.png')
-                # print(f'saved figure {i}')
+                masks_binary = torch.where(att_map_labels==0, 1, 0)
+                tempD = torch.sum(masks_binary*ff.resize(att_maps, size=(224, 224)))/torch.sum(ff.resize(att_maps, size=(224, 224)))
 
                 attention_loss += torch.mean(tempD)
                 loss = task_loss + eta*attention_loss

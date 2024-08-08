@@ -94,7 +94,7 @@ class GradCam_mine:
 
         target = features[-1].squeeze()
 
-        weights = torch.mean(grads_val, axis=(2, 3)).squeeze().detach()
+        weights = torch.mean(grads_val, axis=(2, 3)).squeeze()#.detach()
 
         if self.cuda:
             cam = torch.zeros(target.shape[1:]).cuda()
