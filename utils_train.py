@@ -73,8 +73,8 @@ def sample_selection_with_explanations_places(n_smaple_with_label, path_to_attn,
             path_to_attn_nature[path] = path_to_attn[path]
         elif os.path.isfile(source_dir_path + '/urban/' + path):
             path_to_attn_urban[path] = path_to_attn[path]
-        else:
-            print('Something wrong with this image:', path)
+        # else:
+        #     print('Something wrong with this image:', path)
     print('Total number of explanation labels in train set - nature:', len(path_to_attn_nature))
     print('Total number of explanation labels in train set - urban:', len(path_to_attn_urban))
 
@@ -107,8 +107,8 @@ def sample_selection_with_explanations_places(n_smaple_with_label, path_to_attn,
                 src = source_dir_path + '/urban/' + path
                 dst = fw_dir_path + '/urban/' + path
                 shutil.copyfile(src, dst)
-            else:
-                print('Something wrong with this image:', fw_dir_path + '/' + path)
+            # else:
+            #     print('Something wrong with this image:', fw_dir_path + '/' + path)
 
 def sample_selection_with_explanations_sixray(n_smaple_with_label, path_to_attn, args, label_ratio = 1):
     n_smaple_without_label = int(n_smaple_with_label/label_ratio)-n_smaple_with_label
@@ -118,19 +118,19 @@ def sample_selection_with_explanations_sixray(n_smaple_with_label, path_to_attn,
     source_dir_path = './sixray/train'
     # before selection, let's create two pools for positive and negative separately to ensure our selection with be balanced
     for path in path_to_attn:
-        # if os.path.isfile(source_dir_path + '/neg/' + path):
-        #     path_to_attn_neg[path] = path_to_attn[path]
-        #     print(source_dir_path + '/neg/' + path)
+        # print(path)
+        if os.path.isfile(source_dir_path + '/neg/' + path):
+            path_to_attn_neg[path] = path_to_attn[path]
         if os.path.isfile(source_dir_path + '/pos/' + path):
             path_to_attn_pos[path] = path_to_attn[path]
-        else:
-            print('Something wrong with this image:', path)
+        # else:
+        #     print('Something wrong with this image:', path)
     
-    neg_filenames = next(os.walk('./sixray/train/neg/'), (None, None, []))[2]
-    for path in neg_filenames:
-        if os.path.isfile(source_dir_path + '/neg/' + path):
-            path_to_attn[path] = np.ones(224)
-            path_to_attn_neg[path] = path_to_attn[path]
+    # neg_filenames = next(os.walk('./sixray/train/neg/'), (None, None, []))[2]
+    # for path in neg_filenames:
+        # if os.path.isfile(source_dir_path + '/neg/' + path):
+            # path_to_attn[path] = np.ones(224)
+            # path_to_attn_neg[path] = path_to_attn[path]
 
     print('Total number of explanation labels in train set - negative:', len(path_to_attn_neg))
     print('Total number of explanation labels in train set - positive:', len(path_to_attn_pos))
@@ -154,7 +154,6 @@ def sample_selection_with_explanations_sixray(n_smaple_with_label, path_to_attn,
         os.mkdir(fw_dir_path + '/pos')
         # copy the selected images from source to new folder
         for path in path_to_attn:
-            # print(path)
             if os.path.isfile(source_dir_path + '/neg/' + path):
                 src = source_dir_path + '/neg/' + path
                 dst = fw_dir_path + '/neg/' + path
@@ -163,8 +162,8 @@ def sample_selection_with_explanations_sixray(n_smaple_with_label, path_to_attn,
                 src = source_dir_path + '/pos/' + path
                 dst = fw_dir_path + '/pos/' + path
                 shutil.copyfile(src, dst)
-            else:
-                print('Something wrong with this image:', fw_dir_path + '/' + path)
+            # else:
+            #     print('Something wrong with this image:', fw_dir_path + '/' + path)
 
 def model_test(model, test_loader, args, path_to_attn, output_attention=False, output_iou=False):
     # model.eval()
@@ -259,7 +258,7 @@ def model_train_with_map(model, train_loader, val_loader, args, path_to_attn, tr
 
         outputs_all = []
         targets_all = []
-
+        
         for batch_idx, (inputs, targets, target_maps, target_maps_org, pred_weight, att_weight) in enumerate(train_loader):
             attention_loss = 0
             if args.use_cuda:
@@ -520,7 +519,6 @@ def model_train(model, train_loader, val_loader, args):
 def model_train_mine(model, train_loader, val_loader, args, path_to_attn, eta = 10.0):
     eta = torch.tensor([eta]).cuda()
     task_criterion = nn.CrossEntropyLoss(reduction='none')
-    attention_criterion = nn.L1Loss(reduction='none')
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
 
     best_val_acc = 0
@@ -538,8 +536,8 @@ def model_train_mine(model, train_loader, val_loader, args, path_to_attn, eta = 
 
         outputs_all = []
         targets_all = []
-
         for batch_idx, (inputs, targets, target_maps, target_maps_org, pred_weight, att_weight) in enumerate(train_loader):
+            # print(f'targets {targets}')
             attention_loss = 0
             if args.use_cuda:
                 inputs, targets, target_maps, target_maps_org, pred_weight, att_weight = inputs.cuda(), targets.cuda(
@@ -567,8 +565,17 @@ def model_train_mine(model, train_loader, val_loader, args, path_to_attn, eta = 
                 att_map_labels = torch.stack(att_map_labels)
                 
                 masks_binary = torch.where(att_map_labels==0, 1, 0)
+                import matplotlib.pyplot as plt
+                plt.subplot(3,1,1)
+                plt.imshow(deprocess_image(input.cpu().detach().squeeze().moveaxis(0,-1).numpy()), cmap='gray')
+                plt.subplot(3,1,2)
+                plt.imshow(masks_binary[-1].cpu().detach().squeeze(), cmap='gray')
+                plt.subplot(3,1,3)
+                plt.imshow(deprocess_image(input.cpu().detach().squeeze().moveaxis(0,-1).numpy()), cmap='gray')
+                plt.imshow(masks_binary[-1].cpu().detach().squeeze(), cmap='gray', alpha=0.5)
+                plt.savefig('mask.png')
+                plt.close('all')
                 tempD = torch.sum(masks_binary*ff.resize(att_maps, size=(224, 224)))/torch.sum(ff.resize(att_maps, size=(224, 224)))
-
                 attention_loss += torch.mean(tempD)
                 loss = task_loss + eta*attention_loss
             else:

@@ -59,7 +59,6 @@ if __name__ == '__main__':
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
 
-
     if args.trainWithMap:
         train_with_map_loader = torch.utils.data.DataLoader(
             ImageFolderWithMapsAndWeights(traindir, transforms.Compose([
