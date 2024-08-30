@@ -598,6 +598,7 @@ def model_test(model, test_loader, output_attention=False, output_iou=False):
     outputs_all = []
     targets_all = []
     img_fns = []
+    my_metric_all = []
 
     grad_cam = GradCam(model=model, feature_module=model.layer4, \
                        target_layer_names=["2"], use_cuda=args.use_cuda)
@@ -644,6 +645,18 @@ def model_test(model, test_loader, output_attention=False, output_iou=False):
                     exp_f1.update(f1.item(), 1)
 
                     ious[img_fn] = single_iou.item()
+                    my_metric_all += [np.sum((target_att!=1)*mask)/np.sum(mask)]
+                    # import matplotlib.pyplot as plt
+                    # plt.figure(figsize=(15,5))
+                    # plt.subplot(1,3,1)
+                    # plt.imshow(img)
+                    # plt.subplot(1,3,2)
+                    # plt.imshow(target_att!=1,cmap='gray')
+                    # plt.subplot(1,3,3)
+                    # plt.imshow(mask)
+                    # plt.show()
+                    # plt.savefig('plt.png')
+                    # plt.close('all')
 
         outputs_all += [outputs]
         targets_all += [targets]
@@ -652,8 +665,9 @@ def model_test(model, test_loader, output_attention=False, output_iou=False):
     test_time = et - st
 
     test_acc = accuracy(torch.cat(outputs_all, dim=0), torch.cat(targets_all))[0].cpu().detach()
+    my_metric = np.mean(my_metric_all)
 
-    return test_acc, iou.avg, exp_precision.avg, exp_recall.avg, exp_f1.avg
+    return test_acc, iou.avg, exp_precision.avg, exp_recall.avg, exp_f1.avg, my_metric
 
 
 def BF_solver(X, Y):
@@ -1093,20 +1107,20 @@ if __name__ == '__main__':
 
     if args.evaluate_all:
         for (dirpath, dirnames, model_fns) in walk(args.model_dir):
-            for model_fn in model_fns:
+            for model_fn in sorted(model_fns, key=str.casefold):
                 model = torch.load(os.path.join(dirpath, model_fn))
-                test_acc, test_iou, test_precision, test_recall, test_f1 = model_test(model, test_loader,
+                test_acc, test_iou, test_precision, test_recall, test_f1, test_my_metric= model_test(model, test_loader,
                                                                                                 output_attention=True,
                                                                                                 output_iou=True)
                 print('Model:', model_fn, ', Acc:', test_acc, ', IOU:', test_iou,
-                      ', P:', test_precision, ', R:', test_recall, ', F1:', test_f1)
+                      ', P:', test_precision, ', R:', test_recall, ', F1:', test_f1, 'my metric: ', test_my_metric)
 
     elif args.evaluate:
         model = torch.load(os.path.join(args.model_dir, args.model_name))
 
         # evaluate model on test set (set output_attention=true if you want to save the model generated attention)
-        test_acc, test_iou, test_precision, test_recall, test_f1 = model_test(model, test_loader, output_attention=True, output_iou=True)
-        print('Finish Testing. Test Acc:', test_acc, ', Test IOU:', test_iou, ', Test Precision:', test_precision, ', Test Recall:', test_recall, ', Test F1:', test_f1)
+        test_acc, test_iou, test_precision, test_recall, test_f1, test_my_metric = model_test(model, test_loader, output_attention=True, output_iou=True)
+        print('Finish Testing. Test Acc:', test_acc, ', Test IOU:', test_iou, ', Test Precision:', test_precision, ', Test Recall:', test_recall, ', Test F1:', test_f1, 'my metric: ', test_my_metric)
     else:
         if args.trainWithMap:
             # for ours

@@ -98,12 +98,7 @@ def load_path_to_attentions(args):
                         img_fn = row['img_idx']
                     path_to_pos_attn[img_fn] = np.array(json.loads(row['attention']))
                     path_to_attn[img_fn] = ''
-            neg_filenames = next(os.walk(os.path.join(args.data_dir, '/neg/')), (None, None, []))[2]
-            for path in neg_filenames:
-                if os.path.isfile('./sixray/train/neg/' + path):
-                    path_to_pos_attn[path] = np.ones(224)
-                    path_to_attn[path] = ''
-
+    
     for img_fn in path_to_attn.keys():
         if img_fn in path_to_pos_attn:
             if img_fn in path_to_neg_attn:
@@ -176,15 +171,14 @@ class ImageFolderWithMapsAndWeights(datasets.ImageFolder):
             true_attention_map = path_to_attn_resized[tail]
             pred_weight = 1
             att_weight = 1
-
         else:
             true_attention_map_org = None
             true_attention_map = np.zeros((7, 7), dtype=np.float32)
-
+        
         if true_attention_map_org is None:
             true_attention_map_org = np.ones((224, 224))
-        tuple_with_map_and_weights = (original_tuple + (true_attention_map, true_attention_map_org, pred_weight, att_weight))
 
+        tuple_with_map_and_weights = (original_tuple + (true_attention_map, true_attention_map_org, pred_weight, att_weight))
         return tuple_with_map_and_weights
 
 def get_args():

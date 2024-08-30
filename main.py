@@ -1,11 +1,6 @@
-import argparse
-import cv2
 import os
 import numpy as np
-import json
 from os import walk
-import pandas as pd
-import csv
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -13,9 +8,6 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 import random
-import math
-import shutil
-import time
 
 from metrics import *
 from utils import *
@@ -141,11 +133,11 @@ if __name__ == '__main__':
         for (dirpath, dirnames, model_fns) in walk(args.model_dir):
             for model_fn in model_fns:
                 model = torch.load(os.path.join(dirpath, model_fn))
-                test_acc, test_iou, test_precision, test_recall, test_f1 = model_test(model, test_loader,
+                test_acc, test_iou, test_precision, test_recall, test_f1, test_my_metric = model_test(model, test_loader,
                                                                                                 output_attention=True,
                                                                                                 output_iou=True)
                 print('Model:', model_fn, ', Acc:', test_acc, ', IOU:', test_iou,
-                        ', P:', test_precision, ', R:', test_recall, ', F1:', test_f1)
+                        ', P:', test_precision, ', R:', test_recall, ', F1:', test_f1, 'my metric: ', test_my_metric)
 
     elif args.evaluate:
         model = torch.load(os.path.join(args.model_dir, args.model_name))
