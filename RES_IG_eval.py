@@ -16,6 +16,8 @@ import random
 import math
 import shutil
 import time
+from integrated_gradients import integrated_gradients
+
 
 class FeatureExtractor():
     """ Class for extracting activations and 
@@ -477,105 +479,6 @@ path_to_attn, path_to_attn_resized = load_path_to_attentions()
 # resize attention label from 224x224 to 14x14
 # path_to_attn_resized = resize_attention_label(path_to_attn)
 
-class GradCam:
-    def __init__(self, model, feature_module, target_layer_names, use_cuda):
-        self.model = model
-        self.feature_module = feature_module
-        # self.model.eval()
-        self.cuda = use_cuda
-        if self.cuda:
-            self.model = model.cuda()
-
-        self.extractor = ModelOutputs(self.model, self.feature_module, target_layer_names)
-
-    def forward(self, input):
-        return self.model(input)
-
-    def get_attention_map(self, input, index=None, norm = None):
-        if self.cuda:
-            features, output = self.extractor(input.cuda())
-        else:
-            features, output = self.extractor(input)
-
-        if index == None:
-            index = np.argmax(output.cpu().data.numpy())
-
-        one_hot = np.zeros((1, output.size()[-1]), dtype=np.float32)
-        one_hot[0][index] = 1
-        one_hot = torch.from_numpy(one_hot).requires_grad_(True)
-        if self.cuda:
-            one_hot = torch.sum(one_hot.cuda() * output)
-        else:
-            one_hot = torch.sum(one_hot * output)
-
-        self.feature_module.zero_grad()
-        self.model.zero_grad()
-        one_hot.backward(retain_graph=True)
-
-        grads_val = self.extractor.get_gradients()[-1]
-
-        target = features[-1].squeeze()
-
-        weights = torch.mean(grads_val, axis=(2, 3)).squeeze()
-
-        if self.cuda:
-            cam = torch.zeros(target.shape[1:]).cuda()
-        else:
-            cam = torch.zeros(target.shape[1:])
-
-        for i, w in enumerate(weights):
-            cam += w * target[i, :, :]
-
-        if norm == 'ReLU':
-            cam = torch.relu(cam)
-            cam = cam / (torch.max(cam) + 1e-6)
-        elif norm == 'Sigmoid':
-            cam = torch.sigmoid(cam)
-        else:
-            cam = cam - torch.min(cam)
-            cam = cam / (torch.max(cam) + 1e-6)
-
-        return cam, output
-
-    def __call__(self, input, index=None):
-        if self.cuda:
-            features, output = self.extractor(input.cuda())
-        else:
-            features, output = self.extractor(input)
-
-        if index == None:
-            index = np.argmax(output.cpu().data.numpy())
-
-        one_hot = np.zeros((1, output.size()[-1]), dtype=np.float32)
-        one_hot[0][index] = 1
-        one_hot = torch.from_numpy(one_hot).requires_grad_(True)
-        if self.cuda:
-            one_hot = torch.sum(one_hot.cuda() * output)
-        else:
-            one_hot = torch.sum(one_hot * output)
-
-        self.feature_module.zero_grad()
-        self.model.zero_grad()
-        one_hot.backward(retain_graph=True)
-
-        grads_val = self.extractor.get_gradients()[-1].cpu().data.numpy()
-
-        target = features[-1]
-        target = target.cpu().data.numpy()[0, :]
-
-        weights = np.mean(grads_val, axis=(2, 3))[0, :]
-        cam = np.zeros(target.shape[1:], dtype=np.float32)
-
-        for i, w in enumerate(weights):
-            cam += w * target[i, :, :]
-
-        # use when visualizing explanation
-        cam = cam - np.min(cam)
-        cam = cv2.resize(cam, input.shape[2:])
-        cam = cam / (np.max(cam) + 1e-6)
-
-        return cam
-
 
 def deprocess_image(img):
     """ see https://github.com/jacobgil/keras-grad-cam/blob/master/grad-cam.py#L65 """
@@ -587,7 +490,7 @@ def deprocess_image(img):
     return np.uint8(img * 255)
 
 
-def model_test(model, test_loader, output_attention=False, output_iou=False):
+def model_test(model, test_loader, output_attention=False, output_iou=False, args=None):
     # model.eval()
     iou = AverageMeter()
     exp_precision = AverageMeter()
@@ -600,8 +503,7 @@ def model_test(model, test_loader, output_attention=False, output_iou=False):
     img_fns = []
     my_metric_all = []
 
-    grad_cam = GradCam(model=model, feature_module=model.layer4, \
-                       target_layer_names=["2"], use_cuda=args.use_cuda)
+    # grad_cam = GradCam(model=model, feature_module=model.layer4, target_layer_names=["2"], use_cuda=args.use_cuda)
     y_label = np.array([])
     y_predict = np.array([])
     misclassified = np.array([])
@@ -627,14 +529,27 @@ def model_test(model, test_loader, output_attention=False, output_iou=False):
 
                 img_fns.append(img_fn)
 
-                img = cv2.imread(img_path, 1)
-                img = np.float32(cv2.resize(img, (224, 224))) / 255
-                input = preprocess_image(img)
-                mask = grad_cam(input)
-                show_cam_on_image(img, mask, 'attention', img_path)
+                from PIL import Image
+                import torchvision
+                # img = cv2.imread(img_path, 1)
+                img = Image.open(img_path)
+                # img = np.float32(cv2.resize(img, (224, 224))) / 255
+                test_transforms = torchvision.transforms.Compose([
+                    torchvision.transforms.Resize((224, 224)),
+                    torchvision.transforms.ToTensor(),
+                    torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                    ])
+                
+                if len(np.shape(img))==2:
+                    img = Image.merge("RGB", (img, img, img))
+                
+                input = test_transforms(img)
+                mask = integrated_gradients(model, input.squeeze().to('cuda:0'))
+                
+                # show_cam_on_image(img, mask, 'attention', img_path)
 
                 if output_iou and img_fn in path_to_attn:
-                    item_att_binary = (mask > 0.5)
+                    item_att_binary = (mask > 0.5).cpu().numpy()
                     target_att = path_to_attn[img_fn]
                     target_att_binary = (target_att > 0)
                     single_iou = compute_iou(item_att_binary, target_att_binary)
@@ -646,19 +561,27 @@ def model_test(model, test_loader, output_attention=False, output_iou=False):
                     exp_f1.update(f1.item(), 1)
 
                     ious[img_fn] = single_iou.item()
-                    my_metric_all += [np.sum((target_att!=1)*mask)/np.sum(mask)]
-                    import matplotlib.pyplot as plt
-                    plt.figure(figsize=(15,5))
-                    plt.subplot(1,3,1)
-                    plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB) )
-                    plt.subplot(1,3,2)
-                    plt.imshow(target_att==1,cmap='gray')
-                    plt.subplot(1,3,3)
-                    plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB) )
-                    plt.imshow(mask, alpha=0.7)
-                    # plt.show()
-                    plt.savefig(f'figs/{batch_idx}_{img_fn}_target_{targets[-1]}_guided.png')
-                    plt.close('all')
+                    my_metric_all += [np.sum((target_att!=1)*mask.detach().cpu().numpy())/np.sum(mask.detach().cpu().numpy())]
+                    # import matplotlib.pyplot as plt
+                    # show_transforms = torchvision.transforms.Compose([
+                    # torchvision.transforms.Resize((224, 224)),
+                    # torchvision.transforms.ToTensor(),
+                    # torchvision.transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                    # ])
+                    # plt.figure(figsize=(15,5))
+                    # plt.subplot(1,3,1)
+                    # plt.imshow(show_transforms(img).moveaxis(0,-1))
+                    # plt.subplot(1,3,2)
+                    # plt.imshow(target_att==1,cmap='gray')
+                    # plt.subplot(1,3,3)
+                    # plt.imshow(show_transforms(img).moveaxis(0,-1))
+                    # plt.imshow(mask.detach().cpu().numpy(), alpha=0.7)
+                    # # plt.show()
+                    # if args.model_name=='gender_data_3Runs/baseline_gender_data_seed_0':
+                    #     plt.savefig(f'IG_samples/{batch_idx}_{img_fn}_target_{targets[-1]}_baseline.png')
+                    # else:
+                    #     plt.savefig(f'IG_samples/{batch_idx}_{img_fn}_target_{targets[-1]}_{args.model_name}.png')
+                    # plt.close('all')
 
         outputs_all += [outputs]
         targets_all += [targets]
@@ -726,7 +649,7 @@ def model_train_with_map(model, train_loader, val_loader, transforms = None, are
     best_val_acc = 0
 
     # load grad_cam module
-    grad_cam = GradCam(model=model, feature_module=model.layer4, target_layer_names=["2"], use_cuda=args.use_cuda)
+    # grad_cam = GradCam(model=model, feature_module=model.layer4, target_layer_names=["2"], use_cuda=args.use_cuda)
     for epoch in np.arange(args.n_epoch) + 1:
         # switch to train mode
         model.train()
@@ -754,7 +677,8 @@ def model_train_with_map(model, train_loader, val_loader, transforms = None, are
                 # only train on img with attention labels
                 if valid_weight > 0.0:
                     # get attention maps from grad-CAM
-                    att_map, _ = grad_cam.get_attention_map(torch.unsqueeze(input, 0), target, norm = None)
+                    # att_map, _ = grad_cam.get_attention_map(torch.unsqueeze(input, 0), target, norm = None)
+                    att_map = integrated_gradients(model, input, target)
                     att_maps.append(att_map)
 
                     if transforms == 'Gaussian':
@@ -896,7 +820,8 @@ def model_train_with_map(model, train_loader, val_loader, transforms = None, are
                 img = cv2.imread(img_path, 1)
                 img = np.float32(cv2.resize(img, (224, 224))) / 255
                 input = preprocess_image(img)
-                mask = grad_cam(input)
+                # mask = grad_cam(input)
+                mask = integrated_gradients(model, input.squeeze().to('cuda:0'))
 
                 if img_fn in path_to_attn:
                     item_att_binary = (mask > 0.5)
@@ -1121,7 +1046,7 @@ if __name__ == '__main__':
         model = torch.load(os.path.join(args.model_dir, args.model_name))
 
         # evaluate model on test set (set output_attention=true if you want to save the model generated attention)
-        test_acc, test_iou, test_precision, test_recall, test_f1, test_my_metric = model_test(model, test_loader, output_attention=True, output_iou=True)
+        test_acc, test_iou, test_precision, test_recall, test_f1, test_my_metric = model_test(model, test_loader, output_attention=True, output_iou=True, args=args)
         print('Finish Testing. Test Acc:', test_acc, ', Test IOU:', test_iou, ', Test Precision:', test_precision, ', Test Recall:', test_recall, ', Test F1:', test_f1, 'my metric: ', test_my_metric)
     else:
         if args.trainWithMap:

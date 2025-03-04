@@ -38,8 +38,8 @@ if __name__ == '__main__':
             sample_selection_with_explanations_gender(args.fw_sample, path_to_attn, args=args)
         elif args.data_dir == 'places':
             sample_selection_with_explanations_places(args.fw_sample, path_to_attn, args=args)
-        elif args.data_dir == 'sixray':
-            sample_selection_with_explanations_sixray(args.fw_sample, path_to_attn, args=args)
+        # elif args.data_dir == 'sixray':
+        #     sample_selection_with_explanations_sixray(args.fw_sample, path_to_attn, args=args)
         else:
             print('Error: Unrecognized dataset:', args.data)
 
@@ -141,23 +141,55 @@ if __name__ == '__main__':
 
     elif args.evaluate:
         model = torch.load(os.path.join(args.model_dir, args.model_name))
-
         # evaluate model on test set (set output_attention=true if you want to save the model generated attention)
         test_acc, test_iou, test_precision, test_recall, test_f1 = model_test(model, test_loader, output_attention=True, output_iou=True)
         print('Finish Testing. Test Acc:', test_acc, ', Test IOU:', test_iou, ', Test Precision:', test_precision, ', Test Recall:', test_recall, ', Test F1:', test_f1)
-    else:
-        if args.mine:
-            # for mine
-            print('Init training with explanation supervision (mine)..')
-            best_val_acc = model_train_mine(model, train_with_map_loader, val_loader, args=args, path_to_attn=path_to_attn, eta=args.eta)
-            print('Finish Training. Best Validation acc:', best_val_acc)
-        elif args.trainWithMap:
-            # for ours
-            print('Init training with explanation supervision..')
-            best_val_acc = model_train_with_map(model, train_with_map_loader, val_loader, transforms=args.transforms, area=args.area, eta=args.eta, path_to_attn=path_to_attn, args=args)
-            print('Finish Training. Best Validation acc:', best_val_acc)
-        else:
-            # for baseline without explanation supervision
-            print('Init training for baseline..')
-            best_val_acc = model_train(model, train_loader, val_loader, args=args)
-            print('Finish Training. Best Validation acc:', best_val_acc)
+    elif args.vit:
+        model = models.resnet50(pretrained=True)
+        # replace the original output layer from 1000 classes to 2 class for man and woman task
+        model.fc = nn.Linear(2048, 2)
+        # for baseline without explanation supervision
+        print('Init training for baseline ViT..')
+        best_val_acc = model_train_vit(model, train_loader, val_loader)
+        print('Finish Training. Best Validation acc:', best_val_acc)
+    elif args.loss=='KLD':
+        # for training with KL-Divergence loss
+        print('Init training with explanation supervision (mine) using KL-Divergence Loss..')
+        best_val_acc = model_train_mine_KLD(model, train_with_map_loader, val_loader, args=args, path_to_attn=path_to_attn, eta=args.eta, num_random_entries=args.num_points)
+        print('Finish Training. Best Validation acc:', best_val_acc)
+
+    elif args.loss=='L2':
+        # for training with KL-Divergence loss
+        print('Init training with explanation supervision (mine) using L2 Loss..')
+        best_val_acc = model_train_mine_L2(model, train_with_map_loader, val_loader, args=args, path_to_attn=path_to_attn, eta=args.eta, num_random_entries=args.num_points)
+        print('Finish Training. Best Validation acc:', best_val_acc)
+
+    elif args.loss=='L1':
+        # for training with KL-Divergence loss
+        print('Init training with explanation supervision (mine) using L1 Loss..')
+        best_val_acc = model_train_mine_L1(model, train_with_map_loader, val_loader, args=args, path_to_attn=path_to_attn, eta=args.eta, num_random_entries=args.num_points)
+        print('Finish Training. Best Validation acc:', best_val_acc)
+        
+    elif args.exp_method=='IG':
+        from model_train_mine_IG import *
+        # for training with integrated gradient post-hoc explanations
+        print('Init training with explanation supervision (mine, IG)..')
+        best_val_acc = model_train_mine_IG(model, train_with_map_loader, val_loader, args=args, path_to_attn=path_to_attn, eta=args.eta)
+        print('Finish Training. Best Validation acc:', best_val_acc)
+    elif args.informed:
+        # for training with informed feedback
+        print('Init training with explanation supervision (mine)..')
+        best_val_acc = model_train_informed(model, train_with_map_loader, val_loader, args=args, path_to_attn=path_to_attn, max_num_random_entries=args.num_points)
+        print('Finish Training. Best Validation acc:', best_val_acc)
+    
+    elif args.mine_act:
+        # for mine with only activations as explanations
+        print('Init training with explanation supervision (mine_act)..')
+        best_val_acc = model_train_mine_act(model, train_with_map_loader, val_loader, args=args, path_to_attn=path_to_attn, eta=args.eta, num_random_entries=args.num_points)
+        print('Finish Training. Best Validation acc:', best_val_acc)
+
+    elif args.mine:
+        # for mine
+        print('Init training with explanation supervision (mine)..')
+        best_val_acc = model_train_mine(model, train_with_map_loader, val_loader, args=args, path_to_attn=path_to_attn, eta=args.eta, num_random_entries=args.num_points)
+        print('Finish Training. Best Validation acc:', best_val_acc)

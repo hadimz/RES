@@ -55,11 +55,11 @@ class ModelOutputs():
         return target_activations, x
 
 
-class GradCam_mine:
+class GradCam:
+    """ Class for creating the Grad-CAM explanations using model activations and its output gradients """
     def __init__(self, model, feature_module, target_layer_names, use_cuda):
         self.model = model
         self.feature_module = feature_module
-        # self.model.eval()
         self.cuda = use_cuda
         if self.cuda:
             self.model = model.cuda()
@@ -151,103 +151,6 @@ class GradCam_mine:
         cam = cam - np.min(cam)
         cam = cv2.resize(cam, input.shape[2:])
         cam = cam / (np.max(cam) + 1e-6)
-        return cam
-
-
-class GradCam_mine_act:
-    def __init__(self, model, feature_module, target_layer_names, use_cuda):
-        self.model = model
-        self.feature_module = feature_module
-        # self.model.eval()
-        self.cuda = use_cuda
-        if self.cuda:
-            self.model = model.cuda()
-
-        self.extractor = ModelOutputs(self.model, self.feature_module, target_layer_names)
-
-    def forward(self, input):
-        return self.model(input)
-
-    def get_attention_map(self, input, index=None, norm = None):
-        if self.cuda:
-            features, output = self.extractor(input.cuda())
-        else:
-            features, output = self.extractor(input)
-
-        if index == None:
-            index = np.argmax(output.cpu().data.numpy())
-
-        one_hot = np.zeros((1, output.size()[-1]), dtype=np.float32)
-        one_hot[0][index] = 1
-        one_hot = torch.from_numpy(one_hot).requires_grad_(True)
-        if self.cuda:
-            one_hot = torch.sum(one_hot.cuda() * output)
-        else:
-            one_hot = torch.sum(one_hot * output)
-
-        self.feature_module.zero_grad()
-        self.model.zero_grad()
-        one_hot.backward(retain_graph=True)
-
-        grads_val = self.extractor.get_gradients()[-1]
-
-        target = features[-1].squeeze()
-
-        weights = torch.mean(grads_val, axis=(2, 3)).squeeze()#.detach()
-
-        if self.cuda:
-            cam = torch.zeros(target.shape[1:]).cuda()
-        else:
-            cam = torch.zeros(target.shape[1:])
-
-        for i in range(len(target)):
-            cam += 1. * target[i, :, :]
-
-        if norm == 'ReLU':
-            cam = torch.relu(cam)
-            cam = cam / (torch.max(cam) + 1e-6)
-        elif norm == 'Sigmoid':
-            cam = torch.sigmoid(cam)
-        else:
-            cam = cam - torch.min(cam)
-            cam = cam / (torch.max(cam) + 1e-6)
-
-        return cam, output
-
-    def __call__(self, input, index=None):
-        if self.cuda:
-            features, output = self.extractor(input.cuda())
-        else:
-            features, output = self.extractor(input)
-
-        if index == None:
-            index = np.argmax(output.cpu().data.numpy())
-
-        one_hot = np.zeros((1, output.size()[-1]), dtype=np.float32)
-        one_hot[0][index] = 1
-        one_hot = torch.from_numpy(one_hot).requires_grad_(True)
-        if self.cuda:
-            one_hot = torch.sum(one_hot.cuda() * output)
-        else:
-            one_hot = torch.sum(one_hot * output)
-
-        self.feature_module.zero_grad()
-        self.model.zero_grad()
-        one_hot.backward(retain_graph=True)
-
-
-
-        target = features[-1]
-        target = target.cpu().data.numpy()[0, :]
-
-        cam = np.zeros(target.shape[1:], dtype=np.float32)
-
-        for i in range(len(target)):
-            cam += 1.0 * target[i, :, :]
-
-        # use when visualizing explanation
-        cam = cam - np.min(cam)
-        cam = cv2.resize(cam, input.shape[2:])
-        cam = cam / (np.max(cam) + 1e-6)
 
         return cam
+

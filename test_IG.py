@@ -19,6 +19,7 @@ import random
 import math
 import shutil
 import time
+from integrated_gradients import *
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -149,159 +150,7 @@ class ImageFolderWithMapsAndWeights(datasets.ImageFolder):
         tuple_with_map_and_weights = (original_tuple + (true_attention_map, true_attention_map_org, pred_weight, att_weight))
         return tuple_with_map_and_weights
 
-class FeatureExtractor():
-    """ Class for extracting activations and 
-    registering gradients from targetted intermediate layers """
 
-    def __init__(self, model, target_layers):
-        self.model = model
-        self.target_layers = target_layers
-        self.gradients = []
-
-    def save_gradient(self, grad):
-        self.gradients.append(grad)
-
-    def __call__(self, x):
-        outputs = []
-        self.gradients = []
-        for name, module in self.model._modules.items():
-            print(f'module name: {name}, target layers: {self.target_layers}')
-            x = module(x)
-            if name in self.target_layers:
-                x.register_hook(self.save_gradient)
-                outputs += [x]
-        return outputs, x
-
-class ModelOutputs():
-    """ Class for making a forward pass, and getting:
-    1. The network output.
-    2. Activations from intermeddiate targetted layers.
-    3. Gradients from intermeddiate targetted layers. """
-
-    def __init__(self, model, feature_module, target_layers):
-        self.model = model
-        self.feature_module = feature_module
-        self.feature_extractor = FeatureExtractor(self.feature_module, target_layers)
-
-    def get_gradients(self):
-        return self.feature_extractor.gradients
-
-    def __call__(self, x):
-        target_activations = []
-        for name, module in self.model._modules.items():
-            print(f'input to module {name}, {module}, x shape: {x.shape}')
-            if module == self.feature_module:
-                target_activations, x = self.feature_extractor(x)
-            elif "avgpool" in name.lower():
-                x = module(x)
-                x = x.view(x.size(0), -1)
-                print(f'shape of x after being reshaped: {x.shape}')
-            elif "imp" in name.lower():
-                continue
-            else:
-                x = module(x)
-
-        return target_activations, x
-
-class GradCam:
-    def __init__(self, model, feature_module, target_layer_names, use_cuda):
-        self.model = model
-        self.feature_module = feature_module
-        # self.model.eval()
-        self.cuda = use_cuda
-        if self.cuda:
-            self.model = model.cuda()
-        print(f'feature module: {self.feature_module}')
-        self.extractor = ModelOutputs(self.model, self.feature_module, target_layer_names)
-
-    def forward(self, input):
-        return self.model(input)
-
-    def get_attention_map(self, input, index=None, norm = None):
-        if self.cuda:
-            features, output = self.extractor(input.cuda())
-        else:
-            features, output = self.extractor(input)
-
-        if index == None:
-            index = np.argmax(output.cpu().data.numpy())
-
-        one_hot = np.zeros((1, output.size()[-1]), dtype=np.float32)
-        one_hot[0][index] = 1
-        one_hot = torch.from_numpy(one_hot).requires_grad_(True)
-        if self.cuda:
-            one_hot = torch.sum(one_hot.cuda() * output)
-        else:
-            one_hot = torch.sum(one_hot * output)
-
-        self.feature_module.zero_grad()
-        self.model.zero_grad()
-        one_hot.backward(retain_graph=True)
-
-        print(f'gradients shape: {self.extractor.get_gradients()}')
-        grads_val = self.extractor.get_gradients()[-1]
-
-        target = features[-1].squeeze()
-
-        weights = torch.mean(grads_val, axis=(2, 3)).squeeze()
-
-        if self.cuda:
-            cam = torch.zeros(target.shape[1:]).cuda()
-        else:
-            cam = torch.zeros(target.shape[1:])
-
-        for i, w in enumerate(weights):
-            cam += w * target[i, :, :]
-
-        if norm == 'ReLU':
-            cam = torch.relu(cam)
-            cam = cam / (torch.max(cam) + 1e-6)
-        elif norm == 'Sigmoid':
-            cam = torch.sigmoid(cam)
-        else:
-            cam = cam - torch.min(cam)
-            cam = cam / (torch.max(cam) + 1e-6)
-
-        return cam, output
-
-    def __call__(self, input, index=None):
-        if self.cuda:
-            features, output = self.extractor(input.cuda())
-        else:
-            features, output = self.extractor(input)
-
-        if index == None:
-            index = np.argmax(output.cpu().data.numpy())
-
-        one_hot = np.zeros((1, output.size()[-1]), dtype=np.float32)
-        one_hot[0][index] = 1
-        one_hot = torch.from_numpy(one_hot).requires_grad_(True)
-        if self.cuda:
-            one_hot = torch.sum(one_hot.cuda() * output)
-        else:
-            one_hot = torch.sum(one_hot * output)
-
-        self.feature_module.zero_grad()
-        self.model.zero_grad()
-        one_hot.backward(retain_graph=True)
-
-        grads_val = self.extractor.get_gradients()[-1].cpu().data.numpy()
-
-        target = features[-1]
-        target = target.cpu().data.numpy()[0, :]
-
-        weights = np.mean(grads_val, axis=(2, 3))[0, :]
-        cam = np.zeros(target.shape[1:], dtype=np.float32)
-
-        for i, w in enumerate(weights):
-            cam += w * target[i, :, :]
-
-        # use when visualizing explanation
-        cam = cam - np.min(cam)
-        cam = cv2.resize(cam, input.shape[2:])
-        cam = cam / (np.max(cam) + 1e-6)
-
-        return cam
 
 def resize_attention_label(path_to_attn, width=7, height=7):
     path_to_attn_resized = {}
@@ -489,7 +338,7 @@ if __name__ == '__main__':
     # for name, module in model._modules.items():
     #     print(f'{module} is called {name}!')
     
-    model = TinyModel()
+    model = TinyModel().cuda()
     print("TinyModel layers!")
     for name, module in model._modules.items():
         print(f'{module} is called {name}!')
@@ -519,8 +368,7 @@ if __name__ == '__main__':
 
     best_val_acc = 0
 
-    # load grad_cam module
-    grad_cam = GradCam(model=model, feature_module=model.conv2, target_layer_names=["0"], use_cuda=args.use_cuda)
+    
 
     # switch to train mode
     model.train()
@@ -553,12 +401,17 @@ if __name__ == '__main__':
         att_map_labels_trans = []
         att_weights = []
         outputs = model(inputs)
+        dot = make_dot(outputs[0].mean(), params=dict(model.named_parameters()))
+        file_name = "tinymodel4_graph.dot"
+        with open(file_name, "w") as file:
+            file.write(dot.source)
 
         for input, target, target_map, target_map_org, valid_weight in zip(inputs, targets, target_maps, target_maps_org, att_weight):
             # only train on img with attention labels
             if valid_weight > 0.0:
                 # get attention maps from grad-CAM
-                att_map, _ = grad_cam.get_attention_map(torch.unsqueeze(input, 0), target, norm = None)
+                att_map, temp_batch = integrated_gradients(model, input.to('cuda:0'), target)
+                print(f'single attention map shape: {att_map.shape}')
                 att_maps.append(att_map)
 
                 if transforms == 'Gaussian':
@@ -616,7 +469,7 @@ if __name__ == '__main__':
                     temp = temp / (torch.max(temp) + 1e-6)
                     att_map_labels_trans.append(temp)
 
-                att_map_labels.append(target_map)
+                att_map_labels.append(target_map_org)
                 att_weights.append(valid_weight)
             break
             
@@ -656,6 +509,8 @@ if __name__ == '__main__':
             elif transforms == 'HAICS':
                 tempD = BCE_criterion(att_maps, att_map_labels * (att_map_labels > 0).float()) * (att_map_labels != 0).float()
             else: # GRADIA
+                print(f'attention map shape: {att_maps.shape}')
+                print(f'attention label shape: {att_map_labels.shape}')
                 tempD = attention_criterion(att_maps, att_map_labels * (att_map_labels > 0).float())
 
             attention_loss += torch.mean(tempD)
@@ -686,7 +541,9 @@ if __name__ == '__main__':
 
     print(f'Attention maps shape: {att_maps.shape}')
     # Visualize model computation graph
-    dot = make_dot(loss.mean(), params=dict(model.named_parameters()))
-    file_name = "gradcam4_loss_graph.dot"
+    params = dict(model.named_parameters())
+    params['temp inputs'] = temp_batch
+    dot = make_dot(loss.mean(), params=params)
+    file_name = "IG5_guided_loss_graph_with_inputs.dot"
     with open(file_name, "w") as file:
         file.write(dot.source)

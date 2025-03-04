@@ -178,9 +178,9 @@ class ImageFolderWithMapsAndWeights(datasets.ImageFolder):
         if true_attention_map_org is None:
             true_attention_map_org = np.ones((224, 224))
 
-        tuple_with_map_and_weights = (original_tuple + (true_attention_map, true_attention_map_org, pred_weight, att_weight))
+        tuple_with_map_and_weights = (original_tuple + (true_attention_map, true_attention_map_org, pred_weight, att_weight, path))
         return tuple_with_map_and_weights
-
+    
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--use-cuda', action='store_true', default=True,
@@ -224,6 +224,23 @@ def get_args():
                         help='The scale factor for L2 regularization for deep imputation')
     parser.add_argument('--mine', default=False, type=bool,
                         help='parameter for using my approach')
+    parser.add_argument('--mine_act', default=False, type=bool,
+                        help='parameter for using my approach using only activations as explanations')
+    parser.add_argument('--informed', default=False, type=bool,
+                        help='parameter for simulating informed feedback')
+    parser.add_argument('--num_points', default=10, type=int,
+                        help='number of guiding points')
+    parser.add_argument('--exp_method', default='GradCAM', type=str,
+                        help='method used for generating post-hoc explanations')
+    parser.add_argument('--vit', default=False, type=bool,
+                        help='Whether to train using a Vision Transformer')
+    parser.add_argument('--loss', default='L1', type=str,
+                        help='Explanation loss function used for guidance')
+    parser.add_argument('--normalize', default=False, type=bool,
+                        help='Whether to normalize the distributions in KLD loss')
+    
+    
+    
 
 
     args = parser.parse_args()
